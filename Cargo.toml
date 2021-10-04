@@ -8,3 +8,7 @@ edition = "2018"
 
 [dependencies]
 counter = "0.5.2"
+
+[dev-dependencies]
+quickcheck = "1"
+quickcheck_macros = "1"
