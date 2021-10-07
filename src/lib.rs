@@ -1,31 +1,37 @@
+use bitvec::prelude::*;
 use counter::Counter;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::collections::HashSet;
-struct Node {
+use std::hash::Hash;
+use std::iter::Iterator;
+struct Node<T> {
     frequency: usize,
-    node_type: NodeType,
+    node_type: NodeType<T>,
 }
-impl PartialEq for Node {
+impl<T> PartialEq for Node<T> {
     fn eq(&self, other: &Self) -> bool {
         self.frequency == other.frequency
     }
 }
-impl Eq for Node {}
-impl PartialOrd for Node {
+impl<T> Eq for Node<T> {}
+impl<T> PartialOrd for Node<T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
-impl Ord for Node {
+impl<T> Ord for Node<T> {
     fn cmp(&self, other: &Self) -> Ordering {
         self.frequency.cmp(&other.frequency).reverse()
     }
 }
 
-enum NodeType {
-    Branch { left: Box<Node>, right: Box<Node> },
-    Leaf(char),
+enum NodeType<T> {
+    Branch {
+        left: Box<Node<T>>,
+        right: Box<Node<T>>,
+    },
+    Leaf(T),
 }
 #[derive(Debug)]
 enum Direction {
@@ -33,32 +39,39 @@ enum Direction {
     Right,
 }
 
-pub struct Tree {
-    root: Box<Node>,
-    letters: HashSet<char>,
+pub struct Tree<T> {
+    root: Box<Node<T>>,
+    elements: HashSet<T>,
 }
 
-impl Tree {
-    pub fn new(source: &str) -> Option<Tree> {
+impl<T> Tree<T>
+where
+    T: Hash,
+    T: Eq,
+    T: Clone,
+{
+    pub fn new<I>(source: I) -> Option<Tree<T>>
+    where
+        I: Iterator<Item = T>,
+    {
+        let counts = source.collect::<Counter<_>>();
+
         // Cannot create Huffman tree from empty source
-        if source.is_empty() {
+        if counts.is_empty() {
             return None;
         }
 
-        let counts = source.chars().collect::<Counter<_>>();
-
         let mut node_queue = BinaryHeap::new();
-        let mut letters = HashSet::new();
+        let mut elements = HashSet::new();
 
         for item in &counts {
             node_queue.push(Box::new(Node {
                 node_type: NodeType::Leaf(item.0.clone()),
                 frequency: item.1.clone(),
             }));
-            letters.insert(item.0.clone());
+            elements.insert(item.0.clone());
         }
 
-        // while let (Some(left), Some(right)) = (node_queue.pop(), node_queue.pop()) {}
         while node_queue.len() > 1 {
             let left = node_queue.pop().unwrap();
             let right = node_queue.pop().unwrap();
@@ -70,14 +83,14 @@ impl Tree {
 
         Some(Tree {
             root: node_queue.pop().unwrap(),
-            letters,
+            elements,
         })
     }
 
-    fn find_path(head: &Box<Node>, path: &mut Vec<Direction>, target: char) -> bool {
+    fn find_path(head: &Box<Node<T>>, path: &mut Vec<Direction>, target: &T) -> bool {
         match &head.node_type {
             NodeType::Leaf(letter) => {
-                return *letter == target;
+                return *letter == *target;
             }
             NodeType::Branch { left, right } => {
                 path.push(Direction::Left);
@@ -88,7 +101,7 @@ impl Tree {
                 }
 
                 path.push(Direction::Right);
-                if !Tree::find_path(&right, path, target) {
+                if !Tree::find_path(&right, path, &target) {
                     path.pop();
                 } else {
                     return true;
@@ -99,35 +112,38 @@ impl Tree {
         false
     }
 
-    fn get_code(&self, letter: char) -> String {
-        let mut code = String::new();
+    fn get_code(&self, item: T) -> BitVec {
         let mut path = Vec::new();
+        let mut code = BitVec::new();
 
         match self.root.node_type {
             NodeType::Leaf(_) => {
                 path.push(Direction::Left);
             }
             NodeType::Branch { .. } => {
-                Tree::find_path(&self.root, &mut path, letter);
+                Tree::find_path(&self.root, &mut path, &item);
             }
         }
 
         for direction in &path {
             match direction {
-                Direction::Left => code.push('0'),
-                Direction::Right => code.push('1'),
+                Direction::Left => code.push(false), // 0
+                Direction::Right => code.push(true), // 1
             }
         }
 
         code
     }
 
-    pub fn encode(&self, text: &str) -> Option<String> {
-        let mut encoding = String::new();
+    pub fn encode<I>(&self, symbols: I) -> Option<BitVec>
+    where
+        I: Iterator<Item = T>,
+    {
+        let mut encoding = BitVec::new();
 
-        for letter in text.chars() {
-            if self.letters.contains(&letter) {
-                encoding.push_str(&self.get_code(letter))
+        for symbol in symbols {
+            if self.elements.contains(&symbol) {
+                encoding.append(&mut self.get_code(symbol))
             } else {
                 return None;
             }
@@ -136,28 +152,28 @@ impl Tree {
         Some(encoding)
     }
 
-    pub fn decode(&self, text: &str) -> Option<String> {
+    pub fn decode(&self, bits: &BitVec) -> Vec<T> {
         let mut curr_node = &self.root;
-        let mut decoded_text = String::new();
+        let mut decoded = Vec::new();
 
-        for direction in text.chars() {
-            if let NodeType::Branch { left, right } = &curr_node.node_type {
-                match direction {
-                    '0' => {
+        for bit in bits {
+            match &curr_node.node_type {
+                NodeType::Branch { left, right } => match *bit {
+                    false => {
                         curr_node = &left;
                     }
-                    '1' => {
+                    true => {
                         curr_node = &right;
                     }
-                    _ => return None,
+                },
+                NodeType::Leaf(symbol) => {
+                    decoded.push(symbol.clone());
+                    curr_node = &self.root;
                 }
-            } else if let NodeType::Leaf(symbol) = curr_node.node_type {
-                decoded_text.push(symbol);
-                curr_node = &self.root;
             }
         }
 
-        Some(decoded_text)
+        decoded
     }
 }
 
@@ -173,7 +189,7 @@ mod tests {
 
     #[quickcheck]
     fn encode_decode(input: String) -> bool {
-        let maybe_tree = Tree::new(&input);
+        let maybe_tree = Tree::new(input.chars());
         match maybe_tree {
             None => {
                 if input.is_empty() {
@@ -182,7 +198,13 @@ mod tests {
                     return false;
                 }
             }
-            Some(tree) => return input == tree.decode(&tree.encode(&input).unwrap()).unwrap(),
+            Some(tree) => {
+                return input
+                    == tree
+                        .decode(&tree.encode(input.chars()).unwrap())
+                        .iter()
+                        .collect::<String>()
+            }
         }
     }
 }

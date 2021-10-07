@@ -8,6 +8,7 @@ edition = "2018"
 
 [dependencies]
 counter = "0.5.2"
+bitvec = "0.22.3"
 
 [dev-dependencies]
 quickcheck = "1"
